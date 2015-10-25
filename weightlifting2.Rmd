@@ -1,0 +1,147 @@
+---
+title: "Weight lifting quality prediction"
+author: "Marten Witkamp"
+date: "Thursday, September 24, 2015"
+output: html_document
+---
+
+```{r setoptions, results="hide"}
+setwd("E:/CloudStation/R/practicalmachinelearning/assignment")
+library(knitr)
+library(dplyr)
+# library(ggplot2)
+# library(lubridate)
+# library(ade4)
+library(caret)
+# library(e1071)
+# library(DMwR)
+library(randomForest)
+library(rpart)
+options(scipen=999)
+opts_chunk$set(echo = TRUE, warning = FALSE, cache = TRUE, message = FALSE)
+```
+
+## Introduction note
+Apologies for brevity and lack of pretty images. The same goes for creating a gh-page so this would be easier to read for you. It has taken me all the available time to learn the guts of Caret and get it to work on this dataset. 
+
+## Research question
+Six young health participants of age 20-28 were asked to perform a set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions (A through E). Method A is the correct method, all other methods are commonly made mistakes. A number of measurements on each participant and dumbbell were made during this excercise. The research question for this paper is: "can we predict, from the measurements on participants and dumbbell, which of the five lifting methods the participant used?"
+
+## Methodology
+This paper will use a machine learning algorithm to find predictors. The Caret package (version 6.0.52) in R (version 3.1.2) is the tool that is used to accomplish this. The predictive model is built up on the basis of a section of the total data that is called 'training'. After the model building, its accuracy is tested on the remaining section of the total data set, which is called 'testing'. No more model refinement is done after this point.  
+
+## Loading data
+The data is made available on https://d396qusza40orc.cloudfront.net/predmachlearn and has been downloaded to the working directory. 
+
+```{r loading}
+training <- read.csv("pml-training.csv")
+testing <- read.csv("pml-testing.csv")
+```
+
+## Exploring data
+```{r exploring}
+str(training, list.len = 170)
+
+```
+
+Some of the things that we learned from data exploration:       
+- The variable that we are trying to predict is called "classe" and is a factor variable with levels A through E.             
+- There are 159 possible predictors.        
+- The data is not clean. There are NAs and invalid values (DIV/0). These should be discarded before the model can be buit. Imputation turns out to not be possible, since variables sport either all NA's or all valid values.       
+- The training set consists of 19622 observations, the test set of just 20.      
+
+## Cleaning data
+```{r cleaning}
+# dropping unnecessary variables
+training2 <- select(training, 8:11, 37:49, 60:68, 84:86, 102, 113:124, 140, 151:160)
+
+# making everything but classe numeric
+for (i in (1:ncol(training2))){
+        if (class(training2[,i]) == "integer"){
+                training2[,i] <- as.numeric(training2[,i])
+        }
+}
+```
+
+When all columns that do not carry relevant information - i.e. they are NA, Div/0, empty or unrelated to the activity - are removed, we end up with just 52 predictors plus one dependent. 
+
+All integers are converted to numeric class, since experience shows that the Caret package is most stable with numeric class. 
+
+## Building a predictive model
+
+```{r modeling}
+set.seed(54664)
+# fit1 <- train(classe ~ ., data = training2, method = "glm")
+# doesn't work because classe has more than two levels
+
+fit2 <- train(classe ~ ., data = training2, method = "rpart")
+# runs!
+print(fit2$finalModel)
+
+a <- sample(1:19622, 1000, replace = FALSE)
+training3 <- training2[a, ]
+fit3 <- train(classe ~ ., data = training3, method = "rf", prox = TRUE)
+# takes TOO long for 19622 observations, not done after 4 hours, so did it for 1000 observations instead.
+
+```
+
+Model building turned out to be somewhat of a struggle. A summary of some of the things that DID NOT work for me:        
+- A linear model cannot predict a factor variable with more than two levels.    
+- A random forest model seems like the way to go, but I have not been able to get it to run within 4 hours (after which I terminate the operation).       
+
+What DID in the end work was:   
+- A random forest model with only 1000 (randomly selected) observations.         
+- A (related but simpler) tree model.   
+In both cases, I used all remaining 52 variables. 
+
+## Testing
+
+```{r testing}
+# testing the in sample error
+real2 <- training2[,53]
+predicted2 <- predict(fit2, newdata = training2[,-53])
+insampleerror2 <- confusionMatrix(predicted2, real2)
+
+real3 <- training2[,53]
+predicted3 <- predict(fit3, newdata = training2[,-53])
+insampleerror3 <- confusionMatrix(predicted3, real3)
+
+# performing same data cleaning steps on testing as on training
+testing2 <- select(testing, 8:11, 37:49, 60:68, 84:86, 102, 113:124, 140, 151:160)
+
+for (i in (1:ncol(testing2))){
+        if (class(testing2[,i]) == "integer"){
+                testing2[,i] <- as.numeric(testing2[,i])
+        }
+}
+
+# predicting the test cases
+# predictions2 <- predict(fit2, newdata = testing2[,-53])
+predictions3 <- predict(fit3, newdata = testing2[,-53])
+```
+
+The in sample error for models 2 (tree model) turns out to be large. The accuracy is 0.50. Model 3 (random forest) on the other hand - even though it only uses 1000 out of total of 19622 observations, scores an accuracy of 0.92. The predictions also seem to be more evenly distributed over the five potential outcomes of 'classe'. Model 3 is chosen as the best model.
+
+The out of sample error will probably resemble the in sample error, albeit larger. 
+
+After tranforming the testing dataset in the same manner as the training data set, we predict the following values for the 'classe' variable for the 20 observations: B A B A A E D D A A B C B A E E A B A B. 
+
+## Creating output for Assignment Submission
+```{r output}
+pml_write_files = function(x){
+        n = length(x)
+        for(i in 1:n){
+                filename = paste0("problem_id_",i,".txt")
+                write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+        }
+}
+
+pml_write_files(predictions3)
+```
+
+## Citations
+Generous use was made of the following dataset:
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+Read more: http://groupware.les.inf.puc-rio.br/har#ixzz3mgkDPUEb
+

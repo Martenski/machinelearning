@@ -1,0 +1,197 @@
+---
+title: "Weight lifting quality prediction"
+author: "Marten Witkamp"
+date: "Thursday, September 24, 2015"
+output: html_document
+---
+
+```{r setoptions, echo=FALSE, results="hide"}
+setwd("D:/CloudStation/R/practicalmachinelearning/assignment")
+# options(warn=-1)
+library(knitr)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(ade4)
+library(caret)
+library(e1071)
+library(DMwR)
+library(randomForest)
+options(scipen=999)
+# opts_chunk$set(echo = FALSE, results="hide")
+```
+
+## Summary
+
+
+
+## Research question
+Six young health participants of age 20-28 were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions (A through E). Method A is the correct method, all other methods are commonly made mistakes. A number of measurements on the participant and dumbbell were made during this excercise. The research question for this paper is: "can we predict, from the measurements on participants and dumbbell, which of the five lifting methods the participant used?"
+
+## Methodology
+This paper will use a machine learning algorithm to find predictors. The Caret package (version 6.0.52) in R (version 3.1.2) is the tool that is used to accomplish this. The predictive model is built up on the basis of a section of the total data that is called 'training'. After the model building, its accuracy is tested on the remaining section of the total data set, which is called 'testing'. No more model refinement is done after this point.  
+
+## Loading data
+```{r loading}
+training <- read.csv("pml-training.csv")
+testing <- read.csv("pml-testing.csv")
+```
+
+
+## Exploring data
+```{r exploring}
+str(training, list.len = 170)
+
+```
+
+Some of the things that we learned from data exploration:
+- The variable that we are trying to predict is called "classe" and is a factor variable with levels A through E.      
+- There are 159 possible predictors.    
+- The data is not clean. There are NAs and invalid values (DIV/0). These should be cleaned and discarded or imputed before the model can be built. 
+- Some of the variable classes do not seem accurate, e.g. a variable with ostensibly numeric values that has a factor class. 
+
+## Cleaning data
+
+
+```{r cleaning}
+# making unjust factor variables numeric
+training2 <- training
+y = c("kurtosis_roll_belt", "kurtosis_picth_belt", "kurtosis_yaw_belt", "skewness_roll_belt", "skewness_roll_belt.1", 
+      "skewness_yaw_belt", "max_yaw_belt", "min_yaw_belt", "amplitude_yaw_belt", "kurtosis_roll_arm", 
+      "kurtosis_picth_arm", "kurtosis_yaw_arm", "skewness_roll_arm", "skewness_pitch_arm", "skewness_yaw_arm",
+      "kurtosis_roll_dumbbell", "kurtosis_picth_dumbbell", "kurtosis_yaw_dumbbell", "skewness_roll_dumbbell",
+      "skewness_pitch_dumbbell", "skewness_yaw_dumbbell", "max_yaw_dumbbell", "min_yaw_dumbbell", "amplitude_yaw_dumbbell",
+      "kurtosis_roll_forearm", "kurtosis_picth_forearm", "kurtosis_yaw_forearm", "skewness_roll_forearm", 
+      "skewness_pitch_forearm", "skewness_yaw_forearm", "max_yaw_forearm", "min_yaw_forearm", "amplitude_yaw_forearm")
+for(i in 1:length(y)){
+        j <- y[i]
+        training2[,j] <- as.numeric(as.character(training[,j]))
+}
+
+# making unjust factor variable into date class
+# training2$cvtd_timestamp <- dmy_hm(as.character(training$cvtd_timestamp))
+# actually better to drop the variable altogether
+training2 <- select(training2, -cvtd_timestamp)
+
+# making factor variables other than 'classe' into dummy variables
+levels(training2$new_window) <- c("0", "1")
+training2$new_window <- as.numeric(as.character(training2$new_window))
+
+trainingdummies <- dummyVars(classe ~ user_name, data = training2)
+training3 <- predict(trainingdummies, newdata = training2)
+training3 <- as.data.frame(training3)
+training4 <- cbind(training2, training3)
+training4 <- training4[,-2]
+
+# find variables with very little variation
+nzv <- nearZeroVar(training4, saveMetrics = TRUE)
+a <- c()
+for(i in 1:nrow(nzv)){
+        if(nzv[i, 4] == FALSE){
+                a <- c(a, i)
+        }
+}
+training5 <- select(training4, a)
+
+# if value is NA, impute the value 
+# training6 <-knnImputation(training5[, -122], k=3) #not enough complete cases in the testing set
+# training6 <- cbind(training6, training5[,122])
+# colnames(training6)[128] <- "classe"
+# i suspect this imputation is not good for machine learning, since I can't repeat the exact same process
+# on the testing set (although I can repeat the same method). Will have to learn more about this. 
+
+# removing all columns with NAs
+training7 
+
+# making set comparable to test set
+training8 <- select(training7, -classe)
+
+```
+
+## Building a predictive model
+
+```{r modeling}
+set.seed(54664)
+#try 1
+# fit <- train(classe ~ ., data = training6, method = "glm", preProcess = c("center", "scale"))
+# doesn't work because classe has more than two levels
+
+#try 2
+# fit2 <- train(as.factor(classe) ~ ., data = training6, method = "rf", tuneGrid = data.frame(mtry = 3))
+# worked, however this was with imputing included, which we now no longer use
+
+#try 3
+fit3 <- train(as.factor(classe) ~ ., data = training5, method = "rf", tuneGrid = data.frame(mtry = 3))
+```
+
+
+## Testing
+
+```{r testing}
+# performing same data cleaning steps on testing as on training
+testing2 <- testing
+for(i in 1:length(y)){
+        j <- y[i]
+        testing2[,j] <- as.numeric(as.character(testing[,j]))
+}
+
+# it turns out that variables have different classes in testing, so I'll have to make them the same. 
+# the values remain the same
+for(i in 1:ncol(testing2)){
+        if(is.logical(testing2[,i]) == TRUE){
+                testing2[,i] <- as.numeric(testing2[,i])
+        }
+}
+
+# making unjust factor variable into date class
+# training2$cvtd_timestamp <- dmy_hm(as.character(training$cvtd_timestamp))
+# actually better to drop the variable altogether
+testing2 <- select(testing2, -cvtd_timestamp)
+
+# making factor variables other than 'classe' into dummy variables
+levels(testing2$new_window) <- c("0", "1")
+testing2$new_window <- as.numeric(as.character(testing2$new_window))
+
+testingdummies <- dummyVars(problem_id ~ user_name, data = testing2)
+testing3 <- predict(testingdummies, newdata = testing2)
+testing3 <- as.data.frame(testing3)
+testing4 <- cbind(testing2, testing3)
+testing4 <- testing4[,-2]
+
+# find variables with very little variation
+testing5 <- select(testing4, a)
+testing5 <- testing5[, -122]    # taking out the problem_id
+
+# removing all columns with NA
+
+
+
+# it turns out that the predict function cannot handle NAs, and there is too little data to impute them, 
+# so i'll have to get rid of them
+# time is running out
+
+# if value is NA, impute the value 
+# testing6 <-knnImputation(testing5[, -122], k=3)  #Not sufficient complete cases for computing neighbors
+# testing6 <- cbind(testing6, testing5[,122])
+# colnames(testing6)[128] <- "problem_id"
+
+# I also can't run the predict function on the test set, since there are no rows without missing data
+
+# predicting
+predictionstrain <- predict(fit3, newdata = training6)
+predictionstest <- predict(fit3, newdata = testing5)
+
+# testing the out of sample error
+fit3$finalModel
+confusionMatrix(predictions, testing5$classe)
+
+
+
+```
+
+## Citations
+Generous use was made of the following dataset:
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+Read more: http://groupware.les.inf.puc-rio.br/har#ixzz3mgkDPUEb
+
